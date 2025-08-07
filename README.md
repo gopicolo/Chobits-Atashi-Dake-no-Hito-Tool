@@ -1,6 +1,6 @@
 # 🛠️ Chobits GBA Translation Tool
 
-Custom romhacking tools for extracting and reinserting dialogue from the Game Boy Advance game:  
+Custom romhacking tools created by **gopicolo** for extracting and reinserting dialogue from the Game Boy Advance game:  
 **Chobits - Atashi Dake no Hito (Japan)**.
 
 This project includes two main scripts:
@@ -62,10 +62,3 @@ Text is encoded and decoded using **Shift-JIS**.
 
 - Python 3.x
 - No external libraries required
-
----
-
-## 👤 Author
-
-Created by [Gopicolo](https://github.com/gopicolo)  
-Check out my GitHub for more fan translation tools
