@@ -39,7 +39,7 @@ def read_string_from(data, offset, terminator_byte):
     while i < len(chunk):
         # PLAYER_NAME_FULL
         if chunk[i:i+2] == player_name_full_code:
-            result.append("[PLAYER_NAME_FULL]")
+            result.append("[PLAYER_NAME]")
             i += 2
             continue
         # PLAYER_NAME_FIRST

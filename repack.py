@@ -21,7 +21,7 @@ player_name_last_code = b'\x02'
 
 # --- TAGS ---
 TAG_MAP = {
-    '[PLAYER_NAME_FULL]': player_name_full_code,
+    '[PLAYER_NAME]': player_name_full_code,
     '[PLAYER_NAME_FIRST]': player_name_first_code,
     '[PLAYER_NAME_LAST]': player_name_last_code
 }
