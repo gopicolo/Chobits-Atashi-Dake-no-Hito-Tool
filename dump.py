@@ -1,4 +1,4 @@
-# dumper_final_v2.py
+# dumper_final_v4.py
 import struct
 import os
 import codecs
@@ -12,48 +12,83 @@ output_filename = "dialogue_for_translation.txt"
 # --- GAME-SPECIFIC BYTES ---
 terminator = b'\x00'
 newline_char = b'\x0a'
-# This is our newly discovered control code for the player's name
-player_name_code = b'\x02\x01'
+player_name_full_code = b'\x02\x01'   # nome completo
+player_name_first_code = b'\x01'      # primeiro nome
+player_name_last_code = b'\x02'       # sobrenome
 
 # ---------------------------------
 
 def custom_sjis_error_handler(e):
-    """
-    Custom error handler for the shift_jis codec.
-    Wraps undecodable byte sequences in a <$ HEX $> tag.
-    """
     if not isinstance(e, UnicodeDecodeError):
         raise e
-    
     bad_bytes = e.object[e.start:e.end]
     hex_representation = bad_bytes.hex().upper()
     replacement_text = f"<$ {hex_representation} $>"
     return (replacement_text, e.end)
 
-# Register our custom error handler
 codecs.register_error("custom_sjis", custom_sjis_error_handler)
 
 def read_string_from(data, offset, terminator_byte):
-    """
-    Reads a string from the data, handling special control codes
-    and custom characters.
-    """
     end_index = data.find(terminator_byte, offset)
     if end_index == -1:
         end_index = len(data)
-
     chunk = data[offset:end_index]
-    
-    # First, handle our known control codes by replacing them with tags
-    processed_chunk = chunk.replace(player_name_code, b'[PLAYER_NAME]')
-    
-    # Then, handle the game's newline characters
-    processed_chunk = processed_chunk.replace(newline_char, b'\n')
-    
-    # Finally, decode the rest using shift_jis with our custom error handler
-    return processed_chunk.decode('shift_jis', errors='custom_sjis')
 
-# --- MAIN SCRIPT ---
+    result = []
+    i = 0
+    while i < len(chunk):
+        # PLAYER_NAME_FULL
+        if chunk[i:i+2] == player_name_full_code:
+            result.append("[PLAYER_NAME_FULL]")
+            i += 2
+            continue
+        # PLAYER_NAME_FIRST
+        if chunk[i:i+1] == player_name_first_code:
+            result.append("[PLAYER_NAME_FIRST]")
+            i += 1
+            continue
+        # PLAYER_NAME_LAST
+        if chunk[i:i+1] == player_name_last_code:
+            result.append("[PLAYER_NAME_LAST]")
+            i += 1
+            continue
+
+        b = chunk[i]
+
+        # Newline
+        if b == newline_char[0]:
+            result.append("\n")
+            i += 1
+            continue
+
+        # Control bytes <XX>
+        if b < 0x20:
+            result.append(f"<{b:02X}>")
+            i += 1
+            continue
+
+        # Shift-JIS normal
+        try:
+            char = bytes([b]).decode("shift_jis")
+            result.append(char)
+            i += 1
+        except UnicodeDecodeError:
+            if i+1 < len(chunk):
+                try:
+                    char = chunk[i:i+2].decode("shift_jis")
+                    result.append(char)
+                    i += 2
+                    continue
+                except UnicodeDecodeError:
+                    result.append(f"<$ {chunk[i]:02X} $>")
+                    i += 1
+            else:
+                result.append(f"<$ {chunk[i]:02X} $>")
+                i += 1
+
+    return "".join(result)
+
+# --- MAIN ---
 if not os.path.exists(rom_filename):
     print(f"ERROR: ROM file '{rom_filename}' not found.")
 else:
@@ -64,7 +99,7 @@ else:
 
     table_data = rom_data[table_start_offset:table_end_offset]
     pointer_count = len(table_data) // 4
-    
+
     print(f"Table found with {pointer_count} pointers.")
     print(f"Extracting text to '{output_filename}'...")
 
@@ -79,7 +114,7 @@ else:
 
             address = struct.unpack('<I', pointer_bytes)[0]
             pointer_offset = table_start_offset + start
-            
+
             if 0x08000000 < address < 0x09000000:
                 file_offset = address - 0x08000000
                 text_string = read_string_from(rom_data, file_offset, terminator)
@@ -95,7 +130,6 @@ POINTER_OFFSET: 0x{pointer_offset:08X}
 (Null or Invalid Pointer: 0x{address:X})
 
 """
-            
             output_file.write(output_block)
 
     print(f"\nExtraction complete! Check '{output_filename}'.")
