@@ -1,4 +1,4 @@
-# repack_final_v4.py
+# repack_final_v9.py
 import struct
 import os
 import re
@@ -19,12 +19,18 @@ player_name_full_code = b'\x02\x01'
 player_name_first_code = b'\x01'
 player_name_last_code = b'\x02'
 
-# Known tags
+# --- TAGS ---
 TAG_MAP = {
     '[PLAYER_NAME_FULL]': player_name_full_code,
     '[PLAYER_NAME_FIRST]': player_name_first_code,
     '[PLAYER_NAME_LAST]': player_name_last_code
 }
+
+# --- REGEX PATTERNS ---
+hex_tag_pattern = r"<\$\s*([0-9A-F\s]+)\s*\$>"
+named_tag_pattern = '|'.join(re.escape(k) for k in TAG_MAP.keys())
+generic_byte_tag_pattern = r"<([0-9A-F]{2})>"
+combined_pattern = re.compile(f"({hex_tag_pattern}|{named_tag_pattern}|{generic_byte_tag_pattern})")
 
 # ---------------------------------
 
@@ -33,7 +39,10 @@ def parse_text_file(filename):
     entries = {}
     with open(filename, 'r', encoding='utf-8') as f:
         content = f.read()
-    pattern = re.compile(r"<STRING (\d+?)>\nPOINTER_OFFSET: 0x([0-9A-F]+)\n(?:TEXT_OFFSET: 0x[0-9A-F]+\n)?([\s\S]*?)\n\n", re.MULTILINE)
+    pattern = re.compile(
+        r"<STRING (\d+?)>\nPOINTER_OFFSET: 0x([0-9A-F]+)\n(?:TEXT_OFFSET: 0x[0-9A-F]+\n)?([\s\S]*?)\n\n",
+        re.MULTILINE
+    )
     for match in pattern.finditer(content):
         pointer_offset = int(match.group(2), 16)
         text = match.group(3)
@@ -41,6 +50,48 @@ def parse_text_file(filename):
             entries[pointer_offset] = text
     print(f"Found {len(entries)} translatable text entries.")
     return entries
+
+# --- CLEAN TEXT (OPTIONAL) ---
+def clean_text_for_shiftjis(s):
+    replacements = {
+        '♪': '',    # remove nota musical
+        '€': 'E',   # euro
+        # adicione outros conforme necessário
+    }
+    for k, v in replacements.items():
+        s = s.replace(k, v)
+    return s
+
+# --- ENCODE TEXT WITH TAGS ---
+def encode_text_with_tags(text, pointer_offset=None):
+    text = text.replace('\n', chr(newline_char[0]))
+    text = clean_text_for_shiftjis(text)
+
+    def replacer(match):
+        tag = match.group(0)
+        if tag in TAG_MAP:
+            return TAG_MAP[tag].decode('latin1')  # bytes temporários
+        elif tag.startswith('<$') and tag.endswith('$>'):
+            hex_string = tag[2:-2].strip().replace(" ", "")
+            return bytes.fromhex(hex_string).decode('latin1')
+        elif re.fullmatch(r"<([0-9A-F]{2})>", tag):
+            return bytes([int(tag[1:-1], 16)]).decode('latin1')
+        else:
+            return tag
+
+    # substitui todas as tags por bytes temporários
+    processed_text = combined_pattern.sub(replacer, text)
+
+    # codifica em Shift-JIS somente o texto normal
+    try:
+        encoded_bytes = processed_text.encode('shift_jis')
+    except UnicodeEncodeError as e:
+        char = processed_text[e.start:e.end]
+        print(f"\n[ERROR] Cannot encode character '{char}' in pointer offset {hex(pointer_offset)}")
+        print(f"Position in string: {e.start}-{e.end}")
+        print(f"Full text: {text}\n")
+        raise e
+    return encoded_bytes
 
 # --- MAIN ---
 if not all(os.path.exists(f) for f in [rom_filename, translated_text_filename]):
@@ -56,37 +107,13 @@ else:
     current_text_offset = free_space_start_offset
     new_pointers = {}
 
-    hex_tag_pattern = r"<\$\s*([0-9A-F\s]+)\s*\$>"
-    named_tag_pattern = '|'.join(re.escape(k) for k in TAG_MAP.keys())
-    generic_byte_tag_pattern = r"<([0-9A-F]{2})>"
-    combined_pattern = re.compile(f"({hex_tag_pattern}|{named_tag_pattern}|{generic_byte_tag_pattern})")
-
     for pointer_offset, text_string in translated_entries.items():
         new_pointers[pointer_offset] = current_text_offset
-        processed_text = text_string.replace('\n', chr(newline_char[0]))
-        parts = combined_pattern.split(processed_text)
+        encoded_text = encode_text_with_tags(text_string, pointer_offset)
 
-        for part in parts:
-            if not part:
-                continue
-            encoded_bytes = b''
-            if part in TAG_MAP:
-                encoded_bytes = TAG_MAP[part]
-            elif part.startswith('<$') and part.endswith('$>'):
-                hex_string = part[2:-2].strip().replace(" ", "")
-                encoded_bytes = bytes.fromhex(hex_string)
-            elif re.fullmatch(r"[0-9A-F]{2}", part):
-                encoded_bytes = bytes([int(part, 16)])
-            else:
-                try:
-                    encoded_bytes = part.encode('shift_jis')
-                except Exception as e:
-                    print(f"ERROR encoding part '{part}' for pointer {hex(pointer_offset)}: {e}")
-                    encoded_bytes = b''
-
-            rom_data[current_text_offset:current_text_offset+len(encoded_bytes)] = encoded_bytes
-            current_text_offset += len(encoded_bytes)
-
+        # grava no ROM
+        rom_data[current_text_offset:current_text_offset+len(encoded_text)] = encoded_text
+        current_text_offset += len(encoded_text)
         rom_data[current_text_offset] = terminator[0]
         current_text_offset += 1
 
@@ -94,6 +121,7 @@ else:
     if current_text_offset > 0x7FFFFF:
         print("\n!!! WARNING: New text is too large and has overwritten the end of the ROM file!")
 
+    # --- UPDATE POINTERS ---
     print("\nUpdating pointer table...")
     for original_pointer_offset, new_text_location in new_pointers.items():
         new_pointer_value = 0x08000000 + new_text_location
